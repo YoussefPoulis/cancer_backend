@@ -4,27 +4,14 @@ from tensorflow.keras.applications.efficientnet import preprocess_input
 import numpy as np
 from PIL import Image
 import os
-import requests
 
 app = Flask(__name__)
 
-# --- GitHub raw base URL ---
-RAW_BASE_URL = "https://raw.githubusercontent.com/YoussefPoulis/cancer_backend/0a14b687746299f92a4d61d4fa3b63194d268803/"
-
 # --- Main model ---
-MAIN_MODEL_FILENAME = "main_cancer_model.keras"
-MAIN_MODEL_URL = RAW_BASE_URL + MAIN_MODEL_FILENAME
-
-if not os.path.exists(MAIN_MODEL_FILENAME):
-    print(f"[INFO] Downloading main model from GitHub...")
-    r = requests.get(MAIN_MODEL_URL)
-    with open(MAIN_MODEL_FILENAME, "wb") as f:
-        f.write(r.content)
-    print("[INFO] Main model downloaded successfully.")
-
-print(f"[INFO] Loading main model: {MAIN_MODEL_FILENAME}")
-main_model = load_model(MAIN_MODEL_FILENAME)
-print("[INFO] Main model loaded successfully.\n")
+main_model_path = "main_cancer_model.keras"
+print(f"Loading main model from: {main_model_path}")
+main_model = load_model(main_model_path)
+print("Main model loaded successfully.\n")
 
 # --- Class names ---
 class_names = [
@@ -73,29 +60,17 @@ def preprocess_image(img):
     print(f"[DEBUG] Image preprocessed to shape: {img_array.shape}")
     return img_array
 
-def download_and_load_submodel(cancer_type):
-    """Download submodel from GitHub raw URL if not exists, then load it."""
+def load_submodel(cancer_type):
+    """Load submodel for a given cancer type (without 'models/' path)."""
     if cancer_type not in loaded_submodels:
-        submodel_filename = f"{cancer_type.lower().replace(' ', '_')}_model.keras"
-        submodel_url = RAW_BASE_URL + submodel_filename
-
-        # Download if not exists
-        if not os.path.exists(submodel_filename):
-            print(f"[INFO] Downloading submodel for {cancer_type}...")
-            r = requests.get(submodel_url)
-            if r.status_code == 200:
-                with open(submodel_filename, "wb") as f:
-                    f.write(r.content)
-                print(f"[INFO] Submodel downloaded: {submodel_filename}")
-            else:
-                print(f"[WARNING] Submodel not found on GitHub: {submodel_filename}")
-                loaded_submodels[cancer_type] = None
-                return None
-
-        # Load the model
-        print(f"[INFO] Loading submodel: {submodel_filename}")
-        loaded_submodels[cancer_type] = load_model(submodel_filename)
-        print(f"[INFO] Submodel loaded successfully: {submodel_filename}")
+        submodel_name = f"{cancer_type.lower().replace(' ', '_')}_model.keras"
+        print(f"[DEBUG] Looking for submodel: {submodel_name}")
+        if os.path.exists(submodel_name):
+            loaded_submodels[cancer_type] = load_model(submodel_name)
+            print(f"[DEBUG] Submodel loaded successfully: {submodel_name}")
+        else:
+            loaded_submodels[cancer_type] = None
+            print(f"[DEBUG] Submodel file NOT FOUND: {submodel_name}")
     return loaded_submodels[cancer_type]
 
 @app.route("/predict", methods=["POST"])
@@ -113,15 +88,18 @@ def predict():
     cancer_type = class_names[main_index]
     main_confidence = float(main_pred[0][main_index])
     print(f"[DEBUG] Main prediction: {cancer_type} ({main_confidence:.4f})")
+    print(f"[DEBUG] Main prediction raw array: {main_pred}")
 
     # --- Subclass prediction ---
-    submodel = download_and_load_submodel(cancer_type)
+    submodel = load_submodel(cancer_type)
     if submodel:
         sub_pred = submodel.predict(img_array)
+        print(f"[DEBUG] Subclass raw output: {sub_pred}")
         if len(sub_pred[0]) == len(subclasses[cancer_type]):
             sub_index = np.argmax(sub_pred)
             subclass_name = subclasses[cancer_type][sub_index]
             subclass_confidence = float(sub_pred[0][sub_index])
+            print(f"[DEBUG] Predicted subclass: {subclass_name} ({subclass_confidence:.4f})")
         else:
             subclass_name = None
             subclass_confidence = None
@@ -130,6 +108,8 @@ def predict():
         subclass_name = None
         subclass_confidence = None
         print(f"[DEBUG] No submodel found for {cancer_type}")
+
+    print("---------------------------------------------------\n")
 
     return jsonify({
         "cancer_type": cancer_type,
